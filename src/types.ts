@@ -9,6 +9,7 @@ export interface Track {
   artists: string[]
   albumName: string
   isLiked: boolean
+  coverUrl: string | null
 }
 
 export interface NowPlaying {
@@ -16,4 +17,9 @@ export interface NowPlaying {
   track: Track | null
 }
 
-export type PageId = 'now-playing' | 'menu'
+export interface Lyrics {
+  plainLyrics: string | null
+  syncedLyrics: string | null
+}
+
+export type PageId = 'now-playing' | 'menu' | 'lyrics'

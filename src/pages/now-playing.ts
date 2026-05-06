@@ -1,9 +1,12 @@
 // ---------------------------------------------------------------------------
 // pages/now-playing.ts
 //
-// Main screen — one big text container that shows the currently playing track.
-// Polls `/api/g2/now-playing` every NOW_PLAYING_POLL_MS while the page is in
-// the foreground; pauses while in the background.
+// Layout A — "Album Hero":
+//   - Image container (144x144) on the left for the album cover
+//   - Text container on the right (408x272) for title / artist / album / hints
+//
+// On error / empty states we drop the image container entirely so the text
+// can take the full width.
 //
 // Inputs (mapped through `dispatch`):
 //   - press        -> play / pause then immediate refetch
@@ -18,6 +21,7 @@ import {
   StartUpPageCreateResult,
   TextContainerProperty,
   TextContainerUpgrade,
+  ImageContainerProperty,
   OsEventTypeList,
   getBridge,
 } from '../bridge'
@@ -35,30 +39,85 @@ import {
 } from '../state'
 import type { NowPlaying } from '../types'
 import { mountMenu } from './menu'
+import { renderCover, invalidateCoverCache } from '../cover'
 
 // ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
 
-const CONTAINER_ID = 1
-const CONTAINER_NAME = 'now_playing'
+const TEXT_CONTAINER_ID = 1
+const TEXT_CONTAINER_NAME = 'now_playing'
+const COVER_CONTAINER_ID = 10
+const COVER_CONTAINER_NAME = 'cover'
 const NOW_PLAYING_POLL_MS = 5000
 
-function nowPlayingContainer(content: string): TextContainerProperty {
-  return new TextContainerProperty({
-    containerID: CONTAINER_ID,
-    containerName: CONTAINER_NAME,
-    xPosition: 0,
-    yPosition: 0,
-    width: 576,
-    height: 288,
-    borderWidth: 1,
-    borderColor: 5,
-    borderRadius: 2,
-    paddingLength: 8,
-    content,
-    isEventCapture: 1,
-  })
+// Glyph picks. `▶` renders fine on LVGL (validated). `❚❚` does NOT.
+// Tested fallbacks via simulator screenshot — `||` (two ASCII pipes) renders
+// reliably and reads well at the size the title row uses.
+const PLAY_GLYPH = '▶'
+const PAUSE_GLYPH = '||'
+
+// Two layout variants: full (cover + text), or text-only (errors / empty).
+function fullLayout(content: string): {
+  textObject: TextContainerProperty[]
+  imageObject: ImageContainerProperty[]
+  containerTotalNum: number
+} {
+  return {
+    containerTotalNum: 2,
+    textObject: [
+      new TextContainerProperty({
+        containerID: TEXT_CONTAINER_ID,
+        containerName: TEXT_CONTAINER_NAME,
+        xPosition: 160,
+        yPosition: 8,
+        width: 408,
+        height: 272,
+        borderWidth: 0,
+        borderRadius: 0,
+        paddingLength: 4,
+        content,
+        isEventCapture: 1,
+      }),
+    ],
+    imageObject: [
+      new ImageContainerProperty({
+        containerID: COVER_CONTAINER_ID,
+        containerName: COVER_CONTAINER_NAME,
+        xPosition: 0,
+        yPosition: 0,
+        width: 144,
+        height: 144,
+      }),
+    ],
+  }
+}
+
+function textOnlyLayout(content: string): {
+  textObject: TextContainerProperty[]
+  imageObject: undefined
+  containerTotalNum: number
+} {
+  return {
+    containerTotalNum: 1,
+    textObject: [
+      new TextContainerProperty({
+        containerID: TEXT_CONTAINER_ID,
+        containerName: TEXT_CONTAINER_NAME,
+        xPosition: 0,
+        yPosition: 0,
+        width: 576,
+        height: 288,
+        borderWidth: 1,
+        borderColor: 5,
+        borderRadius: 2,
+        paddingLength: 8,
+        content,
+        isEventCapture: 1,
+      }),
+    ],
+    imageObject: undefined,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -71,15 +130,14 @@ function formatNowPlaying(np: NowPlaying | null): string {
       '',
       '   Nothing playing',
       '',
-      '',
-      '',
-      'press: play  swipe-up: like',
-      'swipe-down: menu',
+      '──────────────────',
+      '(·) play   (▲) like',
+      '(▼) menu   (··) exit',
     ].join('\n')
   }
 
   const t = np.track
-  const status = np.isPlaying ? '▶' : '❚❚'
+  const status = np.isPlaying ? PLAY_GLYPH : PAUSE_GLYPH
   const liked = t.isLiked ? ' ♥' : ''
   const artistsLine = t.artists.join(', ')
 
@@ -89,8 +147,9 @@ function formatNowPlaying(np: NowPlaying | null): string {
     artistsLine,
     t.albumName,
     '',
-    'press: play/pause   swipe-up: like',
-    'swipe-down: menu    double: exit',
+    '──────────────────',
+    '(·) play   (▲) like',
+    '(▼) menu   (··) exit',
   ].join('\n')
 }
 
@@ -99,17 +158,17 @@ function formatError(message: string): string {
     '',
     '   ' + message,
     '',
-    '',
-    'press: retry',
+    '──────────────────',
+    '(·) retry   (··) exit',
   ].join('\n')
 }
 
-async function paint(content: string): Promise<void> {
+async function paintText(content: string): Promise<void> {
   const bridge = await getBridge()
   await bridge.textContainerUpgrade(
     new TextContainerUpgrade({
-      containerID: CONTAINER_ID,
-      containerName: CONTAINER_NAME,
+      containerID: TEXT_CONTAINER_ID,
+      containerName: TEXT_CONTAINER_NAME,
       content,
       contentOffset: 0,
       contentLength: content.length,
@@ -117,8 +176,12 @@ async function paint(content: string): Promise<void> {
   )
 }
 
-async function render(): Promise<void> {
-  await paint(formatNowPlaying(readState()))
+async function renderFromState(): Promise<void> {
+  const np = readState()
+  await paintText(formatNowPlaying(np))
+  if (np?.track?.coverUrl) {
+    void renderCover(np.track.id, np.track.coverUrl)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -139,20 +202,24 @@ async function fetchAndRender(): Promise<void> {
     if (ac.signal.aborted) return
     setNowPlaying(np)
     setErrorMessage(null)
-    await render()
+    // If state went from "had a track" to "no track", we keep the full layout
+    // but text indicates nothing playing. To avoid stale cover, we don't
+    // re-paint the image (the container will hold its last bytes — acceptable
+    // for the momentary gap between tracks).
+    await renderFromState()
   } catch (err) {
     if (ac.signal.aborted) return
     if (err instanceof SpotifyNotConnectedError) {
       setErrorMessage('Connect Spotify on phone')
-      await paint(formatError('Connect Spotify on phone'))
+      await mountTextOnly('Connect Spotify on phone')
     } else if (err instanceof MoodifyAuthError) {
       setErrorMessage('Auth error — check API key')
-      await paint(formatError('Auth error - check key'))
+      await mountTextOnly('Auth error - check key')
     } else {
       console.warn('[now-playing] fetch failed:', err)
       // Keep the previous state on transient errors; only paint if no prior state.
       if (!readState()) {
-        await paint(formatError('Backend unreachable'))
+        await mountTextOnly('Backend unreachable')
       }
     }
   } finally {
@@ -183,21 +250,17 @@ function stopPolling(): void {
 let booted = false
 
 /**
- * Boot the page on first call (createStartUpPageContainer); rebuild on every
- * subsequent call. If the host returns anything other than `success` on
- * createStartUp (HMR case: host kept the old container), fall back to
- * rebuildPageContainer.
+ * Mount the full Layout A (cover + text). On first call uses createStartUp,
+ * subsequent calls use rebuild. After rebuild, the cover container is empty
+ * again — we invalidate the cache so the next renderCover() will repush.
  */
 export async function mountNowPlaying(): Promise<void> {
   const bridge = await getBridge()
-  const props = [nowPlayingContainer(formatNowPlaying(readState()))]
+  const layout = fullLayout(formatNowPlaying(readState()))
 
   if (!booted) {
     const result = await bridge.createStartUpPageContainer(
-      new CreateStartUpPageContainer({
-        containerTotalNum: 1,
-        textObject: props,
-      })
+      new CreateStartUpPageContainer(layout)
     )
     if (result === StartUpPageCreateResult.success) {
       booted = true
@@ -207,27 +270,52 @@ export async function mountNowPlaying(): Promise<void> {
         result,
         '— falling back to rebuild'
       )
-      await bridge.rebuildPageContainer(
-        new RebuildPageContainer({
-          containerTotalNum: 1,
-          textObject: props,
-        })
-      )
+      await bridge.rebuildPageContainer(new RebuildPageContainer(layout))
       booted = true
     }
   } else {
-    await bridge.rebuildPageContainer(
-      new RebuildPageContainer({
-        containerTotalNum: 1,
-        textObject: props,
-      })
-    )
+    await bridge.rebuildPageContainer(new RebuildPageContainer(layout))
   }
 
+  invalidateCoverCache()
   setCurrentPage('now-playing')
   startPolling()
   // Force a fresh fetch on mount so the user sees current state immediately.
   void fetchAndRender()
+}
+
+/**
+ * Mount the text-only variant (no cover). Used for error / empty states.
+ */
+async function mountTextOnly(message: string): Promise<void> {
+  const bridge = await getBridge()
+  const layout = textOnlyLayout(formatError(message))
+  if (!booted) {
+    const result = await bridge.createStartUpPageContainer(
+      new CreateStartUpPageContainer({
+        containerTotalNum: layout.containerTotalNum,
+        textObject: layout.textObject,
+      })
+    )
+    if (result !== StartUpPageCreateResult.success) {
+      await bridge.rebuildPageContainer(
+        new RebuildPageContainer({
+          containerTotalNum: layout.containerTotalNum,
+          textObject: layout.textObject,
+        })
+      )
+    }
+    booted = true
+  } else {
+    await bridge.rebuildPageContainer(
+      new RebuildPageContainer({
+        containerTotalNum: layout.containerTotalNum,
+        textObject: layout.textObject,
+      })
+    )
+  }
+  invalidateCoverCache()
+  setCurrentPage('now-playing')
 }
 
 // ---------------------------------------------------------------------------

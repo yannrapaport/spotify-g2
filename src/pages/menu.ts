@@ -23,6 +23,7 @@ import type { EvenHubEvent } from '../bridge'
 import * as moodify from '../moodify-client'
 import { setCurrentPage } from '../state'
 import { mountNowPlaying } from './now-playing'
+import { mountLyrics } from './lyrics'
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -31,11 +32,13 @@ import { mountNowPlaying } from './now-playing'
 const CONTAINER_ID = 2
 const CONTAINER_NAME = 'spotify_menu'
 
+// `♪` (U+266A) renders correctly on LVGL via the simulator — verified.
 const MENU_ITEMS = [
   '> Play/Pause',
   '>> Next',
   '<< Prev',
   '+ Like',
+  '♪ Lyrics',
   '* Surprise Me',
   '< Back',
 ] as const
@@ -45,6 +48,7 @@ type MenuActionKey =
   | 'next'
   | 'prev'
   | 'like'
+  | 'lyrics'
   | 'surprise'
   | 'back'
 
@@ -53,6 +57,7 @@ const MENU_ACTIONS: readonly MenuActionKey[] = [
   'next',
   'prev',
   'like',
+  'lyrics',
   'surprise',
   'back',
 ] as const
@@ -123,6 +128,12 @@ export async function dispatchMenu(event: EvenHubEvent): Promise<void> {
 }
 
 async function runAction(action: MenuActionKey): Promise<void> {
+  // Lyrics navigates to a new page instead of bouncing back to now-playing.
+  if (action === 'lyrics') {
+    await mountLyrics()
+    return
+  }
+
   try {
     switch (action) {
       case 'play_pause':

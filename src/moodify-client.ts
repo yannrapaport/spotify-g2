@@ -10,7 +10,7 @@
 //   - MoodifyError                        -> any other backend / network error
 // ---------------------------------------------------------------------------
 
-import type { NowPlaying } from './types'
+import type { NowPlaying, Lyrics } from './types'
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -150,4 +150,9 @@ export function surpriseMe(): Promise<{
     '/api/g2/surprise-me',
     { method: 'POST' }
   )
+}
+
+export function getLyrics(trackName: string, artistName: string): Promise<Lyrics> {
+  const qs = new URLSearchParams({ trackName, artistName }).toString()
+  return request<Lyrics>(`/api/g2/lyrics?${qs}`)
 }

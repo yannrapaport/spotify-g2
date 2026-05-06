@@ -15,6 +15,8 @@ export {
   TextContainerUpgrade,
   ListContainerProperty,
   ListItemContainerProperty,
+  ImageContainerProperty,
+  ImageRawDataUpdate,
   StartUpPageCreateResult,
   OsEventTypeList,
   EventSourceType,

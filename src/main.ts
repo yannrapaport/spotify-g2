@@ -15,6 +15,7 @@ import {
   onShutdown,
 } from './pages/now-playing'
 import { dispatchMenu } from './pages/menu'
+import { dispatchLyrics } from './pages/lyrics'
 
 async function startApp(): Promise<void> {
   const bridge = await getBridge()
@@ -61,6 +62,8 @@ async function routeEvent(event: EvenHubEvent): Promise<void> {
     await dispatchNowPlaying(event)
   } else if (page === 'menu') {
     await dispatchMenu(event)
+  } else if (page === 'lyrics') {
+    await dispatchLyrics(event)
   }
 }
 
