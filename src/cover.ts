@@ -71,6 +71,14 @@ export async function renderCover(trackId: string, url: string): Promise<void> {
   }
   ctx.drawImage(bitmap, 0, 0, COVER_SIZE, COVER_SIZE)
 
+  // Pre-process the image so the host's gray4 quantization preserves photo
+  // detail. The host appears to threshold/quantize aggressively, so feeding
+  // it a raw downscaled photo collapses most of the tonal range. Three steps:
+  //   1. Luminance (Rec. 601: 0.299 R + 0.587 G + 0.114 B)
+  //   2. Auto-contrast (stretch observed min/max → 0/255)
+  //   3. Floyd-Steinberg dither to 16 evenly-spaced grey levels
+  preprocessForGray4(ctx)
+
   // The host accepts PNG/JPEG bytes as imageData and does the gray4 conversion
   // itself (verified empirically against the simulator: raw 4-bit packed bytes
   // fail with "image format could not be determined").
@@ -97,4 +105,61 @@ export async function renderCover(trackId: string, url: string): Promise<void> {
   } catch (err) {
     console.warn('[cover] updateImageRawData failed:', err)
   }
+}
+
+function preprocessForGray4(ctx: OffscreenCanvasRenderingContext2D): void {
+  const imageData = ctx.getImageData(0, 0, COVER_SIZE, COVER_SIZE)
+  const rgba = imageData.data
+  const N = COVER_SIZE * COVER_SIZE
+
+  // 1. Luminance into a Float32 buffer (need fractional values for diffusion)
+  const gray = new Float32Array(N)
+  let min = 255
+  let max = 0
+  for (let i = 0; i < N; i++) {
+    const y = 0.299 * rgba[i * 4] + 0.587 * rgba[i * 4 + 1] + 0.114 * rgba[i * 4 + 2]
+    gray[i] = y
+    if (y < min) min = y
+    if (y > max) max = y
+  }
+
+  // 2. Auto-contrast: stretch observed range to full 0–255
+  const range = max - min
+  if (range > 1) {
+    const scale = 255 / range
+    for (let i = 0; i < N; i++) {
+      gray[i] = (gray[i] - min) * scale
+    }
+  }
+
+  // 3. Floyd-Steinberg dither to 16 levels (0, 17, 34, …, 255).
+  // Quantizing to multiples of 17 means each level lands at the centre of one
+  // of the host's gray4 buckets, surviving its quantization step.
+  for (let y = 0; y < COVER_SIZE; y++) {
+    for (let x = 0; x < COVER_SIZE; x++) {
+      const idx = y * COVER_SIZE + x
+      const old = gray[idx]
+      let n = Math.round(old / 17)
+      if (n < 0) n = 0
+      else if (n > 15) n = 15
+      const newVal = n * 17
+      gray[idx] = newVal
+      const err = old - newVal
+      if (x + 1 < COVER_SIZE) gray[idx + 1] += err * (7 / 16)
+      if (y + 1 < COVER_SIZE) {
+        if (x > 0) gray[idx + COVER_SIZE - 1] += err * (3 / 16)
+        gray[idx + COVER_SIZE] += err * (5 / 16)
+        if (x + 1 < COVER_SIZE) gray[idx + COVER_SIZE + 1] += err * (1 / 16)
+      }
+    }
+  }
+
+  // Write back as RGB greyscale (R=G=B=v). Alpha already 255 from drawImage.
+  for (let i = 0; i < N; i++) {
+    const v = gray[i] < 0 ? 0 : gray[i] > 255 ? 255 : Math.round(gray[i])
+    rgba[i * 4] = v
+    rgba[i * 4 + 1] = v
+    rgba[i * 4 + 2] = v
+  }
+  ctx.putImageData(imageData, 0, 0)
 }
