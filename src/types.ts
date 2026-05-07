@@ -15,6 +15,10 @@ export interface Track {
 export interface NowPlaying {
   isPlaying: boolean
   track: Track | null
+  /** ms elapsed in the current track (null when nothing is playing). */
+  progressMs: number | null
+  /** total ms of the current track (null when nothing is playing). */
+  durationMs: number | null
 }
 
 export interface Lyrics {
@@ -22,4 +26,11 @@ export interface Lyrics {
   syncedLyrics: string | null
 }
 
-export type PageId = 'now-playing' | 'menu' | 'lyrics'
+export interface Playlist {
+  id: string
+  name: string
+  uri: string
+  trackCount: number
+}
+
+export type PageId = 'now-playing' | 'menu' | 'lyrics' | 'playlists'

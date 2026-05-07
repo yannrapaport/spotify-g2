@@ -24,6 +24,7 @@ import * as moodify from '../moodify-client'
 import { setCurrentPage } from '../state'
 import { mountNowPlaying } from './now-playing'
 import { mountLyrics } from './lyrics'
+import { mountPlaylists } from './playlists'
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -40,6 +41,7 @@ const MENU_ITEMS = [
   '+ Like',
   '♪ Lyrics',
   '* Surprise Me',
+  '> Playlists',
   '< Back',
 ] as const
 
@@ -50,6 +52,7 @@ type MenuActionKey =
   | 'like'
   | 'lyrics'
   | 'surprise'
+  | 'playlists'
   | 'back'
 
 const MENU_ACTIONS: readonly MenuActionKey[] = [
@@ -59,6 +62,7 @@ const MENU_ACTIONS: readonly MenuActionKey[] = [
   'like',
   'lyrics',
   'surprise',
+  'playlists',
   'back',
 ] as const
 
@@ -128,9 +132,13 @@ export async function dispatchMenu(event: EvenHubEvent): Promise<void> {
 }
 
 async function runAction(action: MenuActionKey): Promise<void> {
-  // Lyrics navigates to a new page instead of bouncing back to now-playing.
+  // Pages that own their own lifecycle.
   if (action === 'lyrics') {
     await mountLyrics()
+    return
+  }
+  if (action === 'playlists') {
+    await mountPlaylists()
     return
   }
 

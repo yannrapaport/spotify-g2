@@ -12,12 +12,15 @@ interface AppState {
   currentPage: PageId
   nowPlaying: NowPlaying | null
   errorMessage: string | null
+  /** Set when the backend reports `no_device` — UI surfaces a hint. */
+  noDevice: boolean
 }
 
 const state: AppState = {
   currentPage: 'now-playing',
   nowPlaying: null,
   errorMessage: null,
+  noDevice: false,
 }
 
 export function getCurrentPage(): PageId {
@@ -42,4 +45,12 @@ export function getErrorMessage(): string | null {
 
 export function setErrorMessage(msg: string | null): void {
   state.errorMessage = msg
+}
+
+export function getNoDevice(): boolean {
+  return state.noDevice
+}
+
+export function setNoDevice(v: boolean): void {
+  state.noDevice = v
 }

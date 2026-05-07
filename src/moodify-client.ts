@@ -10,7 +10,7 @@
 //   - MoodifyError                        -> any other backend / network error
 // ---------------------------------------------------------------------------
 
-import type { NowPlaying, Lyrics } from './types'
+import type { NowPlaying, Lyrics, Playlist } from './types'
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -39,6 +39,17 @@ export class SpotifyNotConnectedError extends MoodifyError {
   }
 }
 
+/**
+ * Backend reported `no_device` (503): user has no active or available
+ * Spotify device. UI should show "Open Spotify on phone first".
+ */
+export class NoDeviceError extends MoodifyError {
+  constructor(message = 'no_device') {
+    super(message, 503)
+    this.name = 'NoDeviceError'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -60,19 +71,25 @@ if (!API_KEY) {
 interface RequestOpts {
   method?: 'GET' | 'POST'
   signal?: AbortSignal
+  body?: unknown
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   const url = `${BASE_URL}${path}`
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${API_KEY}`,
+    Accept: 'application/json',
+  }
+  if (opts.body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+  }
   let res: Response
   try {
     res = await fetch(url, {
       method: opts.method ?? 'GET',
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        Accept: 'application/json',
-      },
+      headers,
       signal: opts.signal,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     })
   } catch (err) {
     // Network failure / CORS / DNS / abort
@@ -98,6 +115,9 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
       isObject(body) && typeof body.error === 'string' ? body.error : undefined
     if (errCode === 'spotify_not_connected') {
       throw new SpotifyNotConnectedError()
+    }
+    if (errCode === 'no_device') {
+      throw new NoDeviceError()
     }
     throw new MoodifyError(errCode ?? 'service unavailable', 503)
   }
@@ -155,4 +175,15 @@ export function surpriseMe(): Promise<{
 export function getLyrics(trackName: string, artistName: string): Promise<Lyrics> {
   const qs = new URLSearchParams({ trackName, artistName }).toString()
   return request<Lyrics>(`/api/g2/lyrics?${qs}`)
+}
+
+export function getPlaylists(): Promise<{ playlists: Playlist[] }> {
+  return request<{ playlists: Playlist[] }>('/api/g2/playlists')
+}
+
+export function playContext(contextUri: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>('/api/g2/play-context', {
+    method: 'POST',
+    body: { contextUri },
+  })
 }

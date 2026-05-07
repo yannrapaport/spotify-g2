@@ -29,6 +29,7 @@ import type { EvenHubEvent } from '../bridge'
 import * as moodify from '../moodify-client'
 import {
   MoodifyAuthError,
+  NoDeviceError,
   SpotifyNotConnectedError,
 } from '../moodify-client'
 import {
@@ -36,6 +37,8 @@ import {
   setCurrentPage,
   setErrorMessage,
   setNowPlaying,
+  setNoDevice,
+  getNoDevice,
 } from '../state'
 import type { NowPlaying } from '../types'
 import { mountMenu } from './menu'
@@ -49,7 +52,11 @@ const TEXT_CONTAINER_ID = 1
 const TEXT_CONTAINER_NAME = 'now_playing'
 const COVER_CONTAINER_ID = 10
 const COVER_CONTAINER_NAME = 'cover'
-const NOW_PLAYING_POLL_MS = 5000
+const NOW_PLAYING_POLL_MS = 2000
+// Local "ticker" period for progress-bar smoothing between network polls.
+const PROGRESS_TICK_MS = 200
+// Number of segments in the progress bar.
+const PROGRESS_BAR_SEGMENTS = 12
 
 // Glyph picks. `▶` renders fine on LVGL (validated). `❚❚` does NOT.
 // Tested fallbacks via simulator screenshot — `||` (two ASCII pipes) renders
@@ -124,6 +131,30 @@ function textOnlyLayout(content: string): {
 // Rendering
 // ---------------------------------------------------------------------------
 
+/** "1:05" / "15:23" — minutes:seconds, two-digit seconds. */
+function formatTime(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s < 10 ? '0' : ''}${s}`
+}
+
+/** "▰▰▰▰▰▱▱▱▱▱▱▱" — fixed-width progress bar with PROGRESS_BAR_SEGMENTS slots. */
+function formatProgressBar(progressMs: number, durationMs: number): string {
+  if (durationMs <= 0) return '▱'.repeat(PROGRESS_BAR_SEGMENTS)
+  const ratio = Math.max(0, Math.min(1, progressMs / durationMs))
+  const filled = Math.round(ratio * PROGRESS_BAR_SEGMENTS)
+  return '▰'.repeat(filled) + '▱'.repeat(PROGRESS_BAR_SEGMENTS - filled)
+}
+
+function progressLine(np: NowPlaying): string | null {
+  if (np.progressMs == null || np.durationMs == null || np.durationMs <= 0) {
+    return null
+  }
+  const bar = formatProgressBar(np.progressMs, np.durationMs)
+  return `${formatTime(np.progressMs)} ${bar} ${formatTime(np.durationMs)}`
+}
+
 function formatNowPlaying(np: NowPlaying | null): string {
   if (!np || !np.track) {
     return [
@@ -141,15 +172,29 @@ function formatNowPlaying(np: NowPlaying | null): string {
   const liked = t.isLiked ? ' ♥' : ''
   const artistsLine = t.artists.join(', ')
 
+  // Either a progress line (when we have ms data) or the classic separator.
+  const separator = progressLine(np) ?? '──────────────────'
+
   return [
     `${status} ${t.name}${liked}`,
     '',
     artistsLine,
     t.albumName,
     '',
-    '──────────────────',
+    separator,
     '(·) play   (▲) like',
     '(▼) menu   (··) exit',
+  ].join('\n')
+}
+
+function formatNoDevice(): string {
+  return [
+    '',
+    '   Open Spotify',
+    '   on phone first',
+    '',
+    '──────────────────',
+    '(·) retry   (··) exit',
   ].join('\n')
 }
 
@@ -178,10 +223,51 @@ async function paintText(content: string): Promise<void> {
 
 async function renderFromState(): Promise<void> {
   const np = readState()
+  if (getNoDevice()) {
+    await paintText(formatNoDevice())
+    return
+  }
   await paintText(formatNowPlaying(np))
   if (np?.track?.coverUrl) {
     void renderCover(np.track.id, np.track.coverUrl)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Progress ticker — smooths the bar between network polls.
+//
+// Every PROGRESS_TICK_MS we increment the in-memory progressMs (when playing)
+// by PROGRESS_TICK_MS, and re-paint the text container. The next network poll
+// resets us to ground truth.
+// ---------------------------------------------------------------------------
+
+let progressTimer: ReturnType<typeof setInterval> | null = null
+let lastPaintedSeparator: string | null = null
+
+function startProgressTicker(): void {
+  if (progressTimer !== null) return
+  progressTimer = setInterval(() => {
+    const np = readState()
+    if (!np || !np.isPlaying || np.progressMs == null || np.durationMs == null) {
+      return
+    }
+    np.progressMs = Math.min(np.durationMs, np.progressMs + PROGRESS_TICK_MS)
+    setNowPlaying(np)
+    // Optimization: only repaint when the visible separator (bar/time) changes.
+    const sep = progressLine(np)
+    if (sep === lastPaintedSeparator) return
+    lastPaintedSeparator = sep
+    if (getNoDevice()) return
+    void paintText(formatNowPlaying(np))
+  }, PROGRESS_TICK_MS)
+}
+
+function stopProgressTicker(): void {
+  if (progressTimer !== null) {
+    clearInterval(progressTimer)
+    progressTimer = null
+  }
+  lastPaintedSeparator = null
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +288,8 @@ async function fetchAndRender(): Promise<void> {
     if (ac.signal.aborted) return
     setNowPlaying(np)
     setErrorMessage(null)
+    // Reset the ticker's diff cache so the new ground truth re-paints once.
+    lastPaintedSeparator = null
     // If state went from "had a track" to "no track", we keep the full layout
     // but text indicates nothing playing. To avoid stale cover, we don't
     // re-paint the image (the container will hold its last bytes — acceptable
@@ -232,6 +320,7 @@ function startPolling(): void {
   pollTimer = setInterval(() => {
     void fetchAndRender()
   }, NOW_PLAYING_POLL_MS)
+  startProgressTicker()
 }
 
 function stopPolling(): void {
@@ -241,6 +330,7 @@ function stopPolling(): void {
   }
   inFlightAbort?.abort()
   inFlightAbort = null
+  stopProgressTicker()
 }
 
 // ---------------------------------------------------------------------------
@@ -391,8 +481,15 @@ export async function dispatchNowPlaying(event: EvenHubEvent): Promise<void> {
 async function handlePress(): Promise<void> {
   try {
     await moodify.playPause()
+    setNoDevice(false)
     await fetchAndRender()
   } catch (err) {
+    if (err instanceof NoDeviceError) {
+      // Show "Open Spotify on phone first" until the user retries successfully.
+      setNoDevice(true)
+      await paintText(formatNoDevice())
+      return
+    }
     console.warn('[now-playing] play/pause failed:', err)
   }
 }
