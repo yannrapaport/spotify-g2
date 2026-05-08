@@ -83,3 +83,11 @@ src/
 Polling is paused on `FOREGROUND_EXIT_EVENT (5)`, resumed on
 `FOREGROUND_ENTER_EVENT (4)`, and torn down on `ABNORMAL_EXIT_EVENT (6)` /
 `SYSTEM_EXIT_EVENT (7)`.
+
+## Support
+
+If this plugin is useful to you, you can support its development on [Patreon](https://www.patreon.com/yannrapaport). It covers the VPS that runs the moodify demo backend and helps me keep building open-source tools in my spare time.
+
+## License
+
+[MIT](LICENSE) — © Yann Rapaport
