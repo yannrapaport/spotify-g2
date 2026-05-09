@@ -43,6 +43,14 @@ import {
 import type { NowPlaying } from '../types'
 import { mountMenu } from './menu'
 import { renderCover, invalidateCoverCache } from '../cover'
+import {
+  renderGauge,
+  invalidateGaugeCache,
+  GAUGE_CONTAINER_ID,
+  GAUGE_CONTAINER_NAME,
+  GAUGE_W,
+  GAUGE_H,
+} from '../gauge'
 import { clearConfig } from '../config'
 
 // ---------------------------------------------------------------------------
@@ -56,8 +64,6 @@ const COVER_CONTAINER_NAME = 'cover'
 const NOW_PLAYING_POLL_MS = 2000
 // Local "ticker" period for progress-bar smoothing between network polls.
 const PROGRESS_TICK_MS = 200
-// Number of segments in the progress bar.
-const PROGRESS_BAR_SEGMENTS = 12
 
 // Glyph picks. `▶` renders fine on LVGL (validated). `❚❚` does NOT.
 // Tested fallbacks via simulator screenshot — `||` (two ASCII pipes) renders
@@ -65,22 +71,22 @@ const PROGRESS_BAR_SEGMENTS = 12
 const PLAY_GLYPH = '▶'
 const PAUSE_GLYPH = '||'
 
-// Two layout variants: full (cover + text), or text-only (errors / empty).
+// Two layout variants: full (cover + text + gauge), or text-only (errors / empty).
 function fullLayout(content: string): {
   textObject: TextContainerProperty[]
   imageObject: ImageContainerProperty[]
   containerTotalNum: number
 } {
   return {
-    containerTotalNum: 2,
+    containerTotalNum: 3,
     textObject: [
       new TextContainerProperty({
         containerID: TEXT_CONTAINER_ID,
         containerName: TEXT_CONTAINER_NAME,
         xPosition: 160,
-        yPosition: 8,
+        yPosition: 0,
         width: 408,
-        height: 272,
+        height: 240,
         borderWidth: 0,
         borderRadius: 0,
         paddingLength: 4,
@@ -96,6 +102,14 @@ function fullLayout(content: string): {
         yPosition: 0,
         width: 144,
         height: 144,
+      }),
+      new ImageContainerProperty({
+        containerID: GAUGE_CONTAINER_ID,
+        containerName: GAUGE_CONTAINER_NAME,
+        xPosition: 160,
+        yPosition: 252,
+        width: GAUGE_W,
+        height: GAUGE_H,
       }),
     ],
   }
@@ -140,20 +154,13 @@ function formatTime(ms: number): string {
   return `${m}:${s < 10 ? '0' : ''}${s}`
 }
 
-/** "▰▰▰▰▰▱▱▱▱▱▱▱" — fixed-width progress bar with PROGRESS_BAR_SEGMENTS slots. */
-function formatProgressBar(progressMs: number, durationMs: number): string {
-  if (durationMs <= 0) return '▱'.repeat(PROGRESS_BAR_SEGMENTS)
-  const ratio = Math.max(0, Math.min(1, progressMs / durationMs))
-  const filled = Math.round(ratio * PROGRESS_BAR_SEGMENTS)
-  return '▰'.repeat(filled) + '▱'.repeat(PROGRESS_BAR_SEGMENTS - filled)
-}
-
+/** "1:23 / 4:12" — text-only time readout. The actual visual progress is
+ * rendered as a graphical gauge in a separate image container (see gauge.ts). */
 function progressLine(np: NowPlaying): string | null {
   if (np.progressMs == null || np.durationMs == null || np.durationMs <= 0) {
     return null
   }
-  const bar = formatProgressBar(np.progressMs, np.durationMs)
-  return `${formatTime(np.progressMs)} ${bar} ${formatTime(np.durationMs)}`
+  return `${formatTime(np.progressMs)} / ${formatTime(np.durationMs)}`
 }
 
 function formatNowPlaying(np: NowPlaying | null): string {
@@ -232,6 +239,9 @@ async function renderFromState(): Promise<void> {
   if (np?.track?.coverUrl) {
     void renderCover(np.track.id, np.track.coverUrl)
   }
+  if (np?.progressMs != null && np?.durationMs != null && np.durationMs > 0) {
+    void renderGauge(np.progressMs / np.durationMs)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +264,14 @@ function startProgressTicker(): void {
     }
     np.progressMs = Math.min(np.durationMs, np.progressMs + PROGRESS_TICK_MS)
     setNowPlaying(np)
-    // Optimization: only repaint when the visible separator (bar/time) changes.
+    // Always update the graphical gauge — it skips the work itself when the
+    // pixel fill width hasn't changed, so on a long track this fires only
+    // ~1x/600ms despite the 200ms tick.
+    if (!getNoDevice()) {
+      void renderGauge(np.progressMs / np.durationMs)
+    }
+    // Repaint the text container only when the visible "1:23 / 4:12" string
+    // changes (once per second at most).
     const sep = progressLine(np)
     if (sep === lastPaintedSeparator) return
     lastPaintedSeparator = sep
@@ -369,6 +386,7 @@ export async function mountNowPlaying(): Promise<void> {
   }
 
   invalidateCoverCache()
+  invalidateGaugeCache()
   setCurrentPage('now-playing')
   startPolling()
   // Force a fresh fetch on mount so the user sees current state immediately.
@@ -406,6 +424,7 @@ async function mountTextOnly(message: string): Promise<void> {
     )
   }
   invalidateCoverCache()
+  invalidateGaugeCache()
   setCurrentPage('now-playing')
 }
 
