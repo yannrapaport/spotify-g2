@@ -2,11 +2,18 @@
 // main.ts
 // Entry point — boots the bridge, mounts the now-playing page as the root
 // container, and routes incoming events to the page that's currently mounted.
+//
+// First-launch flow: if loadConfig() returns null, render the in-WebView
+// config form on the phone and wait for the user to save valid credentials,
+// THEN boot the glasses page container. This lets us ship the .ehpk to the
+// store without bundling backend credentials.
 // ---------------------------------------------------------------------------
 
 import { getBridge, OsEventTypeList } from './bridge'
 import type { EvenHubEvent } from './bridge'
 import { getCurrentPage } from './state'
+import { loadConfig } from './config'
+import { renderConfigPage } from './config-page'
 import {
   dispatchNowPlaying,
   mountNowPlaying,
@@ -20,6 +27,13 @@ import { dispatchPlaylists } from './pages/playlists'
 
 async function startApp(): Promise<void> {
   const bridge = await getBridge()
+
+  // Gate boot on a valid runtime config. On first launch this renders the
+  // config form on the phone and resolves once the user has saved.
+  let cfg = await loadConfig()
+  if (!cfg) {
+    cfg = await renderConfigPage()
+  }
 
   // Boot the page container (the page module handles the HMR fallback).
   await mountNowPlaying()

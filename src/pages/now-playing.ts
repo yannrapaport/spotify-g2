@@ -43,6 +43,7 @@ import {
 import type { NowPlaying } from '../types'
 import { mountMenu } from './menu'
 import { renderCover, invalidateCoverCache } from '../cover'
+import { clearConfig } from '../config'
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -439,6 +440,27 @@ export function onShutdown(): void {
  * - Swipe gestures arrive as textEvent with eventType 1/2.
  * - Double click arrives as sysEvent with eventType=DOUBLE_CLICK_EVENT (=3).
  */
+// Secret reset gesture: 3 double-taps within 3 seconds on the now-playing
+// page clears the runtime config and shuts down the plugin. The user
+// re-launches and lands on the config form again. The threshold is high
+// enough not to fire by accident from a single user double-tapping to exit.
+const RESET_GESTURE_TAPS = 3
+const RESET_GESTURE_WINDOW_MS = 3000
+let doubleTapTimestamps: number[] = []
+
+async function recordDoubleTapForReset(): Promise<boolean> {
+  const now = Date.now()
+  doubleTapTimestamps = [
+    ...doubleTapTimestamps.filter((t) => now - t < RESET_GESTURE_WINDOW_MS),
+    now,
+  ]
+  if (doubleTapTimestamps.length < RESET_GESTURE_TAPS) return false
+  doubleTapTimestamps = []
+  console.warn('[now-playing] reset gesture detected — clearing config')
+  await clearConfig()
+  return true
+}
+
 export async function dispatchNowPlaying(event: EvenHubEvent): Promise<void> {
   // Double-press always lives on sysEvent
   const sys = event.sysEvent
@@ -446,7 +468,10 @@ export async function dispatchNowPlaying(event: EvenHubEvent): Promise<void> {
     const t = sys.eventType ?? 0
     if (t === OsEventTypeList.DOUBLE_CLICK_EVENT) {
       const bridge = await getBridge()
-      await bridge.shutDownPageContainer(1)
+      const triggered = await recordDoubleTapForReset()
+      // Either way we exit the page container; on the next launch the
+      // plugin will see no config and render the config form again.
+      await bridge.shutDownPageContainer(triggered ? 0 : 1)
       return
     }
     // Treat sysEvent with a source but no eventType as a single click on the
@@ -473,7 +498,8 @@ export async function dispatchNowPlaying(event: EvenHubEvent): Promise<void> {
       await handleSwipeDown()
     } else if (t === OsEventTypeList.DOUBLE_CLICK_EVENT) {
       const bridge = await getBridge()
-      await bridge.shutDownPageContainer(1)
+      const triggered = await recordDoubleTapForReset()
+      await bridge.shutDownPageContainer(triggered ? 0 : 1)
     }
   }
 }

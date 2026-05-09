@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import type { NowPlaying, Lyrics, Playlist } from './types'
+import { getConfig } from './config'
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -51,18 +52,10 @@ export class NoDeviceError extends MoodifyError {
 }
 
 // ---------------------------------------------------------------------------
-// Config
+// Config — pulled from runtime config (entered by the user on first launch).
+// getConfig() is guaranteed to be non-null after main.ts has booted; if a
+// caller somehow reaches us before then we throw a typed error.
 // ---------------------------------------------------------------------------
-
-const BASE_URL = (import.meta.env.VITE_MOODIFY_URL as string | undefined) ?? ''
-const API_KEY = (import.meta.env.VITE_MOODIFY_API_KEY as string | undefined) ?? ''
-
-if (!BASE_URL) {
-  console.warn('[moodify] VITE_MOODIFY_URL is not set — requests will fail.')
-}
-if (!API_KEY) {
-  console.warn('[moodify] VITE_MOODIFY_API_KEY is not set — requests will 401.')
-}
 
 // ---------------------------------------------------------------------------
 // Internal fetch wrapper
@@ -75,9 +68,14 @@ interface RequestOpts {
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const url = `${BASE_URL}${path}`
+  const cfg = getConfig()
+  if (!cfg) {
+    throw new MoodifyError('plugin not configured')
+  }
+  const baseUrl = cfg.moodifyUrl.replace(/\/+$/, '')
+  const url = `${baseUrl}${path}`
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${API_KEY}`,
+    Authorization: `Bearer ${cfg.apiKey}`,
     Accept: 'application/json',
   }
   if (opts.body !== undefined) {
