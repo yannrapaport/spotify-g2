@@ -77,7 +77,7 @@ function menuContainer(): ListContainerProperty {
     borderWidth: 1,
     borderColor: 5,
     borderRadius: 2,
-    paddingLength: 8,
+    paddingLength: 0,
     isEventCapture: 1,
     itemContainer: new ListItemContainerProperty({
       itemCount: MENU_ITEMS.length,

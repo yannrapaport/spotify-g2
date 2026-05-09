@@ -192,7 +192,16 @@ function startTickers(): void {
 
 export async function mountLyrics(): Promise<void> {
   const bridge = await getBridge()
-  const np = getNowPlaying()
+
+  // Do a fresh now-playing fetch so we always show lyrics for the currently
+  // playing track — not stale state from before the user opened the menu.
+  let np = getNowPlaying()
+  try {
+    np = await moodify.getNowPlaying()
+  } catch {
+    // Non-fatal: fall back to cached state.
+  }
+
   const track = np?.track
 
   page.track = track ? { name: track.name, artists: track.artists, id: track.id } : null
