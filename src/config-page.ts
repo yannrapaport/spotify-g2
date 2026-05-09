@@ -116,11 +116,11 @@ const HTML = `
   }
 </style>
 <div class="config-root">
-  <h1>Spotify G2</h1>
+  <h1>Moodify Remote</h1>
   <p class="subtitle">
-    Enter the URL and API key of your moodify backend.
-    Don't have one? Deploy your own at
-    <a href="https://github.com/yannrapaport/moodify" target="_blank" rel="noreferrer">github.com/yannrapaport/moodify</a>.
+    Enter the URL and API key of your Moodify backend.
+    Don't have one?
+    <a href="https://github.com/yannrapaport/moodify#deploy-in-5-minutes" target="_blank" rel="noreferrer">Deploy in 5 minutes →</a>
   </p>
 
   <form id="cfg-form" autocomplete="off">
