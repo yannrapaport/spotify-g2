@@ -65,6 +65,7 @@ const COVER_CONTAINER_ID = 10
 const COVER_CONTAINER_NAME = 'cover'
 const NOW_PLAYING_POLL_MS = 2000
 const PROGRESS_TICK_MS = 200
+const DIM_AFTER_MS = 5000
 
 // Max chars before truncation — keeps text within the 408×228 container so
 // swipe-down is never swallowed by the host as a "scroll text" gesture.
@@ -277,6 +278,45 @@ async function renderFromState(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Screen dim — blanks the display after DIM_AFTER_MS of no gesture.
+// Any ring/touchpad input wakes back to now-playing.
+// ---------------------------------------------------------------------------
+
+let isDimmed = false
+let dimTimeout: ReturnType<typeof setTimeout> | null = null
+
+function resetDimTimer(): void {
+  if (dimTimeout !== null) clearTimeout(dimTimeout)
+  dimTimeout = setTimeout(() => { void dimScreen() }, DIM_AFTER_MS)
+}
+
+function cancelDimTimer(): void {
+  if (dimTimeout !== null) { clearTimeout(dimTimeout); dimTimeout = null }
+}
+
+async function dimScreen(): Promise<void> {
+  isDimmed = true
+  stopPolling()
+  cancelDimTimer()
+  const bridge = await getBridge()
+  await bridge.rebuildPageContainer(new RebuildPageContainer({
+    containerTotalNum: 1,
+    textObject: [new TextContainerProperty({
+      containerID: TEXT_CONTAINER_ID,
+      containerName: TEXT_CONTAINER_NAME,
+      xPosition: 0,
+      yPosition: 0,
+      width: 576,
+      height: 288,
+      borderWidth: 0,
+      paddingLength: 0,
+      content: '',
+      isEventCapture: 1,
+    })],
+  }))
+}
+
+// ---------------------------------------------------------------------------
 // Progress ticker — smooths the bar between network polls.
 //
 // Every PROGRESS_TICK_MS we increment the in-memory progressMs (when playing)
@@ -376,6 +416,7 @@ function stopPolling(): void {
   inFlightAbort?.abort()
   inFlightAbort = null
   stopProgressTicker()
+  cancelDimTimer()
 }
 
 // ---------------------------------------------------------------------------
@@ -412,11 +453,12 @@ export async function mountNowPlaying(): Promise<void> {
     await bridge.rebuildPageContainer(new RebuildPageContainer(layout))
   }
 
+  isDimmed = false
   invalidateCoverCache()
   invalidateGaugeCache()
   setCurrentPage('now-playing')
   startPolling()
-  // Force a fresh fetch on mount so the user sees current state immediately.
+  resetDimTimer()
   void fetchAndRender()
 }
 
@@ -460,12 +502,14 @@ async function mountTextOnly(message: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function onForegroundEnter(): void {
+  isDimmed = false
   startPolling()
+  resetDimTimer()
   void fetchAndRender()
 }
 
 export function onForegroundExit(): void {
-  stopPolling()
+  stopPolling() // also cancels dim timer
 }
 
 export function onShutdown(): void {
@@ -508,6 +552,14 @@ async function recordDoubleTapForReset(): Promise<boolean> {
 }
 
 export async function dispatchNowPlaying(event: EvenHubEvent): Promise<void> {
+  // Any gesture wakes the screen if dimmed.
+  if (isDimmed) {
+    isDimmed = false
+    await mountNowPlaying()
+    return
+  }
+  resetDimTimer()
+
   // Double-press always lives on sysEvent
   const sys = event.sysEvent
   if (sys) {
