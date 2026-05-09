@@ -59,11 +59,18 @@ import { clearConfig } from '../config'
 
 const TEXT_CONTAINER_ID = 1
 const TEXT_CONTAINER_NAME = 'now_playing'
+const TIME_CONTAINER_ID = 12
+const TIME_CONTAINER_NAME = 'progress_time'
 const COVER_CONTAINER_ID = 10
 const COVER_CONTAINER_NAME = 'cover'
 const NOW_PLAYING_POLL_MS = 2000
-// Local "ticker" period for progress-bar smoothing between network polls.
 const PROGRESS_TICK_MS = 200
+
+// Max chars before truncation — keeps text within the 408×228 container so
+// swipe-down is never swallowed by the host as a "scroll text" gesture.
+const MAX_TITLE = 26
+const MAX_ARTISTS = 28
+const MAX_ALBUM = 24
 
 // Glyph picks. `▶` renders fine on LVGL (validated). `❚❚` does NOT.
 // Tested fallbacks via simulator screenshot — `||` (two ASCII pipes) renders
@@ -71,14 +78,21 @@ const PROGRESS_TICK_MS = 200
 const PLAY_GLYPH = '▶'
 const PAUSE_GLYPH = '||'
 
-// Two layout variants: full (cover + text + gauge), or text-only (errors / empty).
+// Layout:
+//   x=0    cover 144×144
+//   x=160  main text 408×228 (isEventCapture)
+//   x=160  time text 90×22 at y=254 (e.g. "1:23 / 4:12")
+//   x=256  gauge image 288×20 at y=255
+//
+// Text height capped at 228 so content never overflows — overflow makes the
+// host swallow swipe-down as a text-scroll gesture instead of firing our handler.
 function fullLayout(content: string): {
   textObject: TextContainerProperty[]
   imageObject: ImageContainerProperty[]
   containerTotalNum: number
 } {
   return {
-    containerTotalNum: 3,
+    containerTotalNum: 4,
     textObject: [
       new TextContainerProperty({
         containerID: TEXT_CONTAINER_ID,
@@ -86,12 +100,24 @@ function fullLayout(content: string): {
         xPosition: 160,
         yPosition: 0,
         width: 408,
-        height: 240,
+        height: 228,
         borderWidth: 0,
         borderRadius: 0,
         paddingLength: 4,
         content,
         isEventCapture: 1,
+      }),
+      new TextContainerProperty({
+        containerID: TIME_CONTAINER_ID,
+        containerName: TIME_CONTAINER_NAME,
+        xPosition: 160,
+        yPosition: 254,
+        width: 90,
+        height: 22,
+        borderWidth: 0,
+        paddingLength: 0,
+        content: '',
+        isEventCapture: 0,
       }),
     ],
     imageObject: [
@@ -106,8 +132,8 @@ function fullLayout(content: string): {
       new ImageContainerProperty({
         containerID: GAUGE_CONTAINER_ID,
         containerName: GAUGE_CONTAINER_NAME,
-        xPosition: 160,
-        yPosition: 252,
+        xPosition: 256,
+        yPosition: 255,
         width: GAUGE_W,
         height: GAUGE_H,
       }),
@@ -154,13 +180,14 @@ function formatTime(ms: number): string {
   return `${m}:${s < 10 ? '0' : ''}${s}`
 }
 
-/** "1:23 / 4:12" — text-only time readout. The actual visual progress is
- * rendered as a graphical gauge in a separate image container (see gauge.ts). */
-function progressLine(np: NowPlaying): string | null {
-  if (np.progressMs == null || np.durationMs == null || np.durationMs <= 0) {
-    return null
-  }
-  return `${formatTime(np.progressMs)} / ${formatTime(np.durationMs)}`
+function trunc(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 1) + '…' : s
+}
+
+/** Time string for the dedicated time container: "1:23 / 4:12" */
+function formatTimeLabel(np: NowPlaying): string {
+  if (np.progressMs == null || np.durationMs == null || np.durationMs <= 0) return ''
+  return `${formatTime(np.progressMs)}/${formatTime(np.durationMs)}`
 }
 
 function formatNowPlaying(np: NowPlaying | null): string {
@@ -169,40 +196,30 @@ function formatNowPlaying(np: NowPlaying | null): string {
       '',
       '   Nothing playing',
       '',
-      '──────────────────',
-      '(·) play   (▲) like',
-      '(▼) menu   (··) exit',
+      '(·) play  (▲) like  (▼) menu  (··) exit',
     ].join('\n')
   }
 
   const t = np.track
   const status = np.isPlaying ? PLAY_GLYPH : PAUSE_GLYPH
   const liked = t.isLiked ? ' ♥' : ''
-  const artistsLine = t.artists.join(', ')
-
-  // Either a progress line (when we have ms data) or the classic separator.
-  const separator = progressLine(np) ?? '──────────────────'
 
   return [
-    `${status} ${t.name}${liked}`,
+    `${status} ${trunc(t.name, MAX_TITLE)}${liked}`,
     '',
-    artistsLine,
-    t.albumName,
+    trunc(t.artists.join(', '), MAX_ARTISTS),
+    trunc(t.albumName, MAX_ALBUM),
     '',
-    separator,
-    '(·) play   (▲) like',
-    '(▼) menu   (··) exit',
+    '(·) play  (▲) like  (▼) menu  (··) exit',
   ].join('\n')
 }
 
 function formatNoDevice(): string {
   return [
     '',
-    '   Open Spotify',
-    '   on phone first',
+    '   Open Spotify on phone first',
     '',
-    '──────────────────',
-    '(·) retry   (··) exit',
+    '(·) retry              (··) exit',
   ].join('\n')
 }
 
@@ -211,8 +228,7 @@ function formatError(message: string): string {
     '',
     '   ' + message,
     '',
-    '──────────────────',
-    '(·) retry   (··) exit',
+    '(·) retry              (··) exit',
   ].join('\n')
 }
 
@@ -229,6 +245,19 @@ async function paintText(content: string): Promise<void> {
   )
 }
 
+async function paintTime(label: string): Promise<void> {
+  const bridge = await getBridge()
+  await bridge.textContainerUpgrade(
+    new TextContainerUpgrade({
+      containerID: TIME_CONTAINER_ID,
+      containerName: TIME_CONTAINER_NAME,
+      content: label,
+      contentOffset: 0,
+      contentLength: label.length,
+    })
+  )
+}
+
 async function renderFromState(): Promise<void> {
   const np = readState()
   if (getNoDevice()) {
@@ -236,11 +265,14 @@ async function renderFromState(): Promise<void> {
     return
   }
   await paintText(formatNowPlaying(np))
+  if (np) {
+    void paintTime(formatTimeLabel(np))
+    if (np.progressMs != null && np.durationMs != null && np.durationMs > 0) {
+      void renderGauge(np.progressMs / np.durationMs)
+    }
+  }
   if (np?.track?.coverUrl) {
     void renderCover(np.track.id, np.track.coverUrl)
-  }
-  if (np?.progressMs != null && np?.durationMs != null && np.durationMs > 0) {
-    void renderGauge(np.progressMs / np.durationMs)
   }
 }
 
@@ -264,19 +296,14 @@ function startProgressTicker(): void {
     }
     np.progressMs = Math.min(np.durationMs, np.progressMs + PROGRESS_TICK_MS)
     setNowPlaying(np)
-    // Always update the graphical gauge — it skips the work itself when the
-    // pixel fill width hasn't changed, so on a long track this fires only
-    // ~1x/600ms despite the 200ms tick.
-    if (!getNoDevice()) {
-      void renderGauge(np.progressMs / np.durationMs)
-    }
-    // Repaint the text container only when the visible "1:23 / 4:12" string
-    // changes (once per second at most).
-    const sep = progressLine(np)
-    if (sep === lastPaintedSeparator) return
-    lastPaintedSeparator = sep
     if (getNoDevice()) return
-    void paintText(formatNowPlaying(np))
+    // Gauge: skips internally when fill width hasn't moved.
+    void renderGauge(np.progressMs / np.durationMs)
+    // Time label: repaint only when the string changes (~1x/s).
+    const label = formatTimeLabel(np)
+    if (label === lastPaintedSeparator) return
+    lastPaintedSeparator = label
+    void paintTime(label)
   }, PROGRESS_TICK_MS)
 }
 
