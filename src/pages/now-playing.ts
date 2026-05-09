@@ -65,7 +65,7 @@ const COVER_CONTAINER_ID = 10
 const COVER_CONTAINER_NAME = 'cover'
 const NOW_PLAYING_POLL_MS = 2000
 const PROGRESS_TICK_MS = 200
-const DIM_AFTER_MS = 5000
+const DIM_AFTER_MS = 10000
 
 // Max chars before truncation — keeps text within the 408×228 container so
 // swipe-down is never swallowed by the host as a "scroll text" gesture.
@@ -197,7 +197,7 @@ function formatNowPlaying(np: NowPlaying | null): string {
       '',
       '   Nothing playing',
       '',
-      '(·) play  (▲) like  (▼) menu  (··) exit',
+      '(·) play  (▲) surprise  (▼) menu  (··) exit',
     ].join('\n')
   }
 
@@ -211,7 +211,7 @@ function formatNowPlaying(np: NowPlaying | null): string {
     trunc(t.artists.join(', '), MAX_ARTISTS),
     trunc(t.albumName, MAX_ALBUM),
     '',
-    '(·) play  (▲) like  (▼) menu  (··) exit',
+    '(·) play  (▲) surprise  (▼) menu  (··) exit',
   ].join('\n')
 }
 
@@ -620,10 +620,10 @@ async function handlePress(): Promise<void> {
 
 async function handleSwipeUp(): Promise<void> {
   try {
-    await moodify.like()
+    await moodify.surpriseMe()
     await fetchAndRender()
   } catch (err) {
-    console.warn('[now-playing] like failed:', err)
+    console.warn('[now-playing] surprise-me failed:', err)
   }
 }
 
