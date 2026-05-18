@@ -1,16 +1,15 @@
 // ---------------------------------------------------------------------------
 // config-page.ts
-// First-launch config form rendered into #app on the phone-side WebView.
-// We DON'T initialise the glasses page container until the user has saved a
-// valid config — that way we never push anything to the glasses with stale or
-// missing credentials.
+// First-launch config form rendered into #app on the phone-side WebView. The
+// glasses page container is mounted by main.ts BEFORE this runs, so the user
+// sees a "Configure on phone" screen on the G2 while filling this in.
 //
-// Style: minimal inline CSS, dark theme aligned with the Even Hub design
-// guidelines (`--color-bg #111`, `--color-surface #1A1A1A`, accent #FEF991).
-// Inputs and buttons sized big enough for tactile use on a phone screen.
+// Single field: API key. The backend URL is hardcoded in config.ts and pinned
+// in the app.json network whitelist; users get their key from the moodify
+// signup page at https://moodify.theproductguy.cloud.
 // ---------------------------------------------------------------------------
 
-import { setConfig, validateConfig, type PluginConfig } from './config'
+import { setConfig, validateConfig, MOODIFY_URL, type PluginConfig } from './config'
 
 const HTML = `
 <style>
@@ -118,20 +117,13 @@ const HTML = `
 <div class="config-root">
   <h1>Moodify Remote</h1>
   <p class="subtitle">
-    Enter the URL and API key of your Moodify backend.
-    Don't have one?
-    <a href="https://github.com/yannrapaport/moodify#deploy-in-5-minutes" target="_blank" rel="noreferrer">Deploy in 5 minutes →</a>
+    Get your API key at
+    <a id="cfg-signup" href="${MOODIFY_URL}" target="_blank" rel="noreferrer">${MOODIFY_URL.replace(/^https?:\/\//, '')}</a>:
+    sign in with Spotify, copy the key, paste it below.
   </p>
 
   <form id="cfg-form" autocomplete="off">
     <div class="field">
-      <label for="cfg-url">Moodify URL</label>
-      <input id="cfg-url" name="url" type="text"
-             inputmode="url" autocapitalize="none" autocorrect="off"
-             placeholder="https://moodify.example.com" required />
-    </div>
-
-    <div class="field" style="margin-top: 16px;">
       <label for="cfg-key">API key</label>
       <input id="cfg-key" name="key" type="password"
              autocapitalize="none" autocorrect="off"
@@ -145,8 +137,8 @@ const HTML = `
   </form>
 
   <div class="footer">
-    Tip: to reset the config later, on the glasses' Now Playing page do three
-    quick double-taps within 3 seconds.
+    Tip: to reset later, on the glasses' Now Playing page do three quick
+    double-taps within 3 seconds.
   </div>
 </div>
 `.trim()
@@ -162,7 +154,6 @@ export function renderConfigPage(): Promise<PluginConfig> {
     root.innerHTML = HTML
 
     const form = document.getElementById('cfg-form') as HTMLFormElement
-    const urlInput = document.getElementById('cfg-url') as HTMLInputElement
     const keyInput = document.getElementById('cfg-key') as HTMLInputElement
     const button = document.getElementById('cfg-save') as HTMLButtonElement
     const status = document.getElementById('cfg-status') as HTMLDivElement
@@ -178,15 +169,13 @@ export function renderConfigPage(): Promise<PluginConfig> {
     form.addEventListener('submit', async (e) => {
       e.preventDefault()
 
-      const moodifyUrl = urlInput.value.trim().replace(/\/+$/, '')
       const apiKey = keyInput.value.trim()
-
-      if (!moodifyUrl || !apiKey) {
-        setStatus('error', 'Both fields are required.')
+      if (!apiKey) {
+        setStatus('error', 'API key is required.')
         return
       }
 
-      const candidate: PluginConfig = { moodifyUrl, apiKey }
+      const candidate: PluginConfig = { apiKey }
 
       button.disabled = true
       setStatus('info', 'Testing connection…')
@@ -206,7 +195,7 @@ export function renderConfigPage(): Promise<PluginConfig> {
       setTimeout(() => resolve(candidate), 500)
     })
 
-    // Focus the URL field for quick entry on the phone keyboard.
-    setTimeout(() => urlInput.focus(), 50)
+    // Focus the API key field for quick paste-from-clipboard.
+    setTimeout(() => keyInput.focus(), 50)
   })
 }

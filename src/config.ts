@@ -1,36 +1,22 @@
 // ---------------------------------------------------------------------------
 // config.ts
-// Runtime config (moodify URL + API key) — entered by the user on first
-// launch via the in-WebView config form. We don't bake credentials into the
-// bundle anymore so the .ehpk is safe to distribute via the Even Hub store.
+// Runtime config (Moodify API key) — entered by the user on first launch via
+// the in-WebView config form. We don't bake credentials into the bundle so the
+// .ehpk is safe to distribute via the Even Hub store.
 //
-// Investigation findings (Q1/Q2/Q3):
-//   Q1 — WebView is touchable. The Even Hub host is a Flutter WebView (Chromium
-//        on Android / WKWebView on iOS) running on the phone screen. Plugins
-//        can render arbitrary HTML/forms; the design-guidelines skill explicitly
-//        documents tokens for "phone-side config / settings / library screens".
-//   Q2 — There is NO native plugin-settings field in app.json. The packed
-//        manifest only accepts: package_id, edition, name, version,
-//        min_app_version, min_sdk_version, entrypoint, permissions,
-//        supported_languages. The companion app does not expose a per-plugin
-//        settings panel. Persistence must come from `bridge.setLocalStorage` /
-//        `bridge.getLocalStorage` (browser localStorage is unreliable across
-//        Flutter WebView restarts).
-//   Q3 — First launch flow: user installs the .ehpk from the store, taps the
-//        plugin tile in Even Hub, the Flutter WebView loads `entrypoint`
-//        (index.html). Whatever the page renders is what the user sees. So
-//        we render the config form on first launch, then rebuild as the
-//        glasses page once config is saved.
-//
-// Approach chosen: A — in-WebView config UI, persisted via
-// bridge.setLocalStorage (with a browser-localStorage fallback for the dev
-// simulator where the bridge mock may not implement storage).
+// The backend URL is hardcoded to the public Moodify service we ship against:
+// the Even Hub store's network whitelist is a static list in app.json, so a
+// user-supplied URL wouldn't pass review and wouldn't work at runtime anyway.
+// Self-hosters can fork this repo, change MOODIFY_URL + app.json whitelist,
+// and ship their own .ehpk.
 // ---------------------------------------------------------------------------
 
 import { getBridge } from './bridge'
 
+/** Public Moodify service. Must match the whitelist in app.json. */
+export const MOODIFY_URL = 'https://moodify.theproductguy.cloud'
+
 export interface PluginConfig {
-  moodifyUrl: string
   apiKey: string
 }
 
@@ -44,14 +30,13 @@ let cached: PluginConfig | null = null
 function parseStoredValue(raw: string | null | undefined): PluginConfig | null {
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as Partial<PluginConfig>
-    if (
-      typeof parsed.moodifyUrl === 'string' &&
-      typeof parsed.apiKey === 'string' &&
-      parsed.moodifyUrl.length > 0 &&
-      parsed.apiKey.length > 0
-    ) {
-      return { moodifyUrl: parsed.moodifyUrl, apiKey: parsed.apiKey }
+    const parsed = JSON.parse(raw) as Partial<PluginConfig> & {
+      // Legacy: older builds stored both fields. We ignore moodifyUrl on read
+      // since the backend URL is now hardcoded.
+      moodifyUrl?: string
+    }
+    if (typeof parsed.apiKey === 'string' && parsed.apiKey.length > 0) {
+      return { apiKey: parsed.apiKey }
     }
   } catch {
     // fall through
@@ -142,39 +127,28 @@ export async function clearConfig(): Promise<void> {
 }
 
 /**
- * Validate a candidate config by making two HTTP calls:
- *   1. GET ${url}/health        — verifies the URL points to a moodify
- *                                 backend (200 + {status:'ok'}).
- *   2. GET ${url}/api/g2/now-playing with the bearer key — verifies the
- *      key is accepted (anything other than 401 means the key is valid;
- *      503 spotify_not_connected is fine — key works, Spotify just isn't
- *      linked yet).
+ * Validate the API key by making two HTTP calls:
+ *   1. GET /health         — sanity check that the backend is reachable.
+ *   2. GET /api/g2/now-playing with the bearer key — verifies the key is
+ *      accepted (anything other than 401 means valid; 503
+ *      spotify_not_connected is fine — key works, Spotify just isn't linked
+ *      yet on the user's account).
  *
  * Returns an error message on failure, or null on success.
  */
 export async function validateConfig(c: PluginConfig): Promise<string | null> {
-  const url = c.moodifyUrl.replace(/\/+$/, '')
-  if (!/^https?:\/\//i.test(url)) {
-    return 'URL must start with http:// or https://'
-  }
   if (c.apiKey.trim().length < 8) {
     return 'API key looks too short'
   }
 
   // 1. /health
   try {
-    const res = await fetch(`${url}/health`, {
+    const res = await fetch(`${MOODIFY_URL}/health`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
     })
     if (!res.ok) {
-      return `Health check failed (HTTP ${res.status})`
-    }
-    const body = (await res.json().catch(() => null)) as
-      | { status?: string }
-      | null
-    if (!body || body.status !== 'ok') {
-      return 'Not a moodify backend (unexpected /health response)'
+      return `Backend unreachable (HTTP ${res.status})`
     }
   } catch (err) {
     return err instanceof Error
@@ -184,7 +158,7 @@ export async function validateConfig(c: PluginConfig): Promise<string | null> {
 
   // 2. authenticated probe
   try {
-    const res = await fetch(`${url}/api/g2/now-playing`, {
+    const res = await fetch(`${MOODIFY_URL}/api/g2/now-playing`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${c.apiKey}`,

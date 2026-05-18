@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import type { NowPlaying, Lyrics, Playlist } from './types'
-import { getConfig } from './config'
+import { getConfig, MOODIFY_URL } from './config'
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -72,8 +72,7 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   if (!cfg) {
     throw new MoodifyError('plugin not configured')
   }
-  const baseUrl = cfg.moodifyUrl.replace(/\/+$/, '')
-  const url = `${baseUrl}${path}`
+  const url = `${MOODIFY_URL}${path}`
   const headers: Record<string, string> = {
     Authorization: `Bearer ${cfg.apiKey}`,
     Accept: 'application/json',

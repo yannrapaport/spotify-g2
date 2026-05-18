@@ -426,6 +426,16 @@ function stopPolling(): void {
 let booted = false
 
 /**
+ * Lets a sibling boot screen (mounted via `createStartUpPageContainer` from
+ * main.ts) tell us the startup container has already been created, so our own
+ * mount goes straight to `rebuildPageContainer` without hitting the one-shot
+ * `createStartUpPageContainer` again (which would log a fallback warning).
+ */
+export function markStartupCreated(): void {
+  booted = true
+}
+
+/**
  * Mount the full Layout A (cover + text). On first call uses createStartUp,
  * subsequent calls use rebuild. After rebuild, the cover container is empty
  * again — we invalidate the cache so the next renderCover() will repush.

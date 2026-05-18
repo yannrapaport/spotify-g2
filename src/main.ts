@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
 // main.ts
-// Entry point — boots the bridge, mounts the now-playing page as the root
-// container, and routes incoming events to the page that's currently mounted.
+// Entry point — boots the bridge, mounts a boot screen on the glasses BEFORE
+// gating on config so the host has an active event-capture container from
+// t=0, then either pivots to now-playing (config exists) or to the in-WebView
+// config form (first launch). Once config is saved, mounts now-playing.
 //
-// First-launch flow: if loadConfig() returns null, render the in-WebView
-// config form on the phone and wait for the user to save valid credentials,
-// THEN boot the glasses page container. This lets us ship the .ehpk to the
-// store without bundling backend credentials.
+// Why mount a boot screen first: the Even Hub store reviewer requires an
+// active container with `isEventCapture: 1` registered at startup. Without it,
+// touchpad / R1 input has nowhere to route during the config phase.
 // ---------------------------------------------------------------------------
 
 import { getBridge, OsEventTypeList } from './bridge'
@@ -14,8 +15,10 @@ import type { EvenHubEvent } from './bridge'
 import { getCurrentPage } from './state'
 import { loadConfig } from './config'
 import { renderConfigPage } from './config-page'
+import { mountBootScreen, updateBootScreen } from './pages/boot'
 import {
   dispatchNowPlaying,
+  markStartupCreated,
   mountNowPlaying,
   onForegroundEnter,
   onForegroundExit,
@@ -28,11 +31,20 @@ import { dispatchPlaylists } from './pages/playlists'
 async function startApp(): Promise<void> {
   const bridge = await getBridge()
 
-  // Gate boot on a valid runtime config. On first launch this renders the
-  // config form on the phone and resolves once the user has saved.
+  // Reach the host immediately with a placeholder container so input has a
+  // target (isEventCapture: 1) before we even check for stored config.
   let cfg = await loadConfig()
+  await mountBootScreen(cfg ? 'connecting' : 'configure')
+  // The boot screen owns the one-shot startup container — tell now-playing so
+  // its first mount uses rebuild instead of retrying createStartUp.
+  markStartupCreated()
+
+  // Gate boot on a valid runtime config. On first launch this renders the
+  // config form on the phone; the glasses keep showing the "Configure on
+  // phone" boot screen until the user saves.
   if (!cfg) {
     cfg = await renderConfigPage()
+    await updateBootScreen('connecting')
   }
 
   // Boot the page container (the page module handles the HMR fallback).
