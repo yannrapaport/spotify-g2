@@ -13,8 +13,8 @@
 
 import { getBridge } from './bridge'
 
-/** Public Moodify service. Must match the whitelist in app.json. */
-export const MOODIFY_URL = 'https://moodify.theproductguy.cloud'
+/** Backend g2 partagé (ex-moodify). Doit matcher la whitelist app.json. */
+export const MOODIFY_URL = 'https://g2.theproductguy.cloud'
 
 export interface PluginConfig {
   apiKey: string

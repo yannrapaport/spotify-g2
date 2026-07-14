@@ -6,7 +6,7 @@
 //
 // Single field: API key. The backend URL is hardcoded in config.ts and pinned
 // in the app.json network whitelist; users get their key from the moodify
-// signup page at https://moodify.theproductguy.cloud.
+// signup page at https://g2.theproductguy.cloud.
 // ---------------------------------------------------------------------------
 
 import { setConfig, validateConfig, MOODIFY_URL, type PluginConfig } from './config'
